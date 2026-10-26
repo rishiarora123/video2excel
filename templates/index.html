@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>video2excel</title>
+<style>
+  :root {
+    --bg: #0b1220; --card: #111c33; --line: #243150; --ink: #e7edf7;
+    --muted: #93a0b8; --accent: #4f8cff; --accent-ink: #fff; --ok: #34d399; --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: radial-gradient(1200px 600px at 50% -10%, #16233f, var(--bg));
+    color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: grid; place-items: start center; padding: 40px 16px;
+  }
+  .wrap { width: 100%; max-width: 660px; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.3px; }
+  .sub { color: var(--muted); margin: 0 0 22px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+  .seg { display: flex; gap: 8px; background: #0c1525; border: 1px solid var(--line); border-radius: 12px; padding: 5px; margin-bottom: 20px; }
+  .seg button { flex: 1; background: transparent; border: 0; color: var(--muted); padding: 10px; border-radius: 9px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: var(--accent-ink); }
+  .drop {
+    border: 2px dashed var(--line); border-radius: 14px; padding: 30px 18px; text-align: center;
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.drag { border-color: var(--accent); background: #16233f; }
+  .drop .big { font-size: 16px; font-weight: 600; }
+  .drop .small { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .file { margin-top: 12px; font-size: 14px; color: var(--ok); word-break: break-all; }
+  .opts { margin-top: 18px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  input[type=number], input[type=text], input[type=password], select {
+    width: 100%; background: #0c1525; border: 1px solid var(--line); border-radius: 9px;
+    color: var(--ink); padding: 9px 10px; font-size: 14px;
+  }
+  .hint { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+  .banner { font-size: 13px; border-radius: 9px; padding: 9px 11px; margin-top: 14px; }
+  .banner.ok { background: #0e2a1f; color: var(--ok); border: 1px solid #184d38; }
+  .banner.warn { background: #2a240e; color: var(--warn); border: 1px solid #4d3f18; }
+  button.go {
+    margin-top: 18px; width: 100%; border: 0; border-radius: 11px; padding: 13px;
+    background: var(--accent); color: var(--accent-ink); font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button.go:disabled { opacity: .55; cursor: default; }
+  .status { margin-top: 14px; min-height: 22px; font-size: 14px; }
+  .status.err { color: #fca5a5; } .status.ok { color: var(--ok); }
+  .spin { display: inline-block; width: 15px; height: 15px; border: 2px solid var(--line);
+    border-top-color: var(--accent); border-radius: 50%; animation: s .7s linear infinite; vertical-align: -2px; margin-right: 8px; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 18px; text-align: center; }
+  input[type=file] { display: none; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🎞️ → 📊 video2excel</h1>
+    <p class="sub">Upload a screen/phone recording and get an Excel file — either the <b>data shown</b> in it (Name / Position / Organization) or the <b>frames</b> as images.</p>
+
+    <div class="card">
+      <form id="f">
+        <div class="seg">
+          <button type="button" id="tab-data" class="on" onclick="setMode('data')">Data (text in the video)</button>
+          <button type="button" id="tab-frames" onclick="setMode('frames')">Frames (images)</button>
+        </div>
+        <input type="hidden" name="mode" id="mode" value="data" />
+
+        <div class="drop" id="drop">
+          <div class="big">Drop a video here or click to choose</div>
+          <div class="small">MP4, MOV, WebM, MKV… up to 500 MB</div>
+          <div class="file" id="fname"></div>
+        </div>
+        <input type="file" id="video" name="video" accept="video/*" />
+
+        <!-- DATA mode -->
+        <div class="opts" id="opts-data">
+          <div class="row">
+            <div>
+              <label for="engine">Engine</label>
+              <select id="engine" name="engine" onchange="syncEngine()">
+                <option value="vision">Claude vision — accurate (needs API key)</option>
+                <option value="ocr">Local OCR (tesseract) — free, rougher</option>
+              </select>
+            </div>
+            <div>
+              <label for="data_fps">Sample rate (fps)</label>
+              <input type="number" id="data_fps" name="data_fps" value="1" min="0.2" step="0.1" />
+            </div>
+          </div>
+          <div id="vision-opts">
+            <div class="row" style="margin-top:14px">
+              <div>
+                <label for="api_key">ANTHROPIC_API_KEY {{ "(found in env)" if has_key else "" }}</label>
+                <input type="password" id="api_key" name="api_key" placeholder="{{ 'using environment key' if has_key else 'sk-ant-…' }}" autocomplete="off" />
+              </div>
+              <div>
+                <label for="model">Model (optional)</label>
+                <input type="text" id="model" name="model" placeholder="claude-sonnet-5-5" />
+              </div>
+            </div>
+            {% if has_key %}
+            <div class="banner ok">An API key is set in the environment — leave the key field blank to use it.</div>
+            {% else %}
+            <div class="banner warn">No API key in the environment. Paste your key above, or switch to the free local OCR engine.</div>
+            {% endif %}
+          </div>
+          <div id="ocr-opts" class="hidden">
+            {% if has_tesseract %}
+            <div class="banner ok">tesseract is installed. OCR reads names well but mangles smaller/wrapped text — expect some noise.</div>
+            {% else %}
+            <div class="banner warn">tesseract isn't installed. Run <code>brew install tesseract</code>, or use the Claude-vision engine.</div>
+            {% endif %}
+          </div>
+          <p class="hint">Built for recordings that scroll through a list (e.g. an attendees list). Each record's three lines become Name, Position, Organization. Duplicate cards from the scroll are merged automatically. <b>Leave the sample rate at 1</b> — the tool already de-duplicates overlapping frames, so a higher rate finds no extra people and only adds OCR noise.</p>
+        </div>
+
+        <!-- FRAMES mode -->
+        <div class="opts hidden" id="opts-frames">
+          <div class="row">
+            <div>
+              <label for="fps">Frames / second</label>
+              <input type="number" id="fps" name="fps" value="1" min="0.1" step="0.1" />
+            </div>
+            <div>
+              <label for="thumb_width">Thumb width (px)</label>
+              <input type="number" id="thumb_width" name="thumb_width" value="220" min="40" step="10" />
+            </div>
+          </div>
+          <div class="row" style="margin-top:14px">
+            <div>
+              <label for="max_frames">Max frames</label>
+              <input type="number" id="max_frames" name="max_frames" value="400" min="1" step="1" />
+            </div>
+            <div></div>
+          </div>
+          <p class="hint">Each sampled frame is embedded as an image with its frame number and timestamp.</p>
+        </div>
+
+        <button type="submit" class="go" id="go" disabled>Convert to Excel</button>
+        <div class="status" id="status"></div>
+      </form>
+    </div>
+    <p class="foot">Runs locally · ffmpeg for frames · openpyxl for the workbook</p>
+  </div>
+
+<script>
+  const input = document.getElementById('video');
+  const fname = document.getElementById('fname');
+  const go = document.getElementById('go');
+  const status = document.getElementById('status');
+  const drop = document.getElementById('drop');
+
+  function setMode(m) {
+    document.getElementById('mode').value = m;
+    document.getElementById('tab-data').classList.toggle('on', m === 'data');
+    document.getElementById('tab-frames').classList.toggle('on', m === 'frames');
+    document.getElementById('opts-data').classList.toggle('hidden', m !== 'data');
+    document.getElementById('opts-frames').classList.toggle('hidden', m !== 'frames');
+  }
+  function syncEngine() {
+    const v = document.getElementById('engine').value;
+    document.getElementById('vision-opts').classList.toggle('hidden', v !== 'vision');
+    document.getElementById('ocr-opts').classList.toggle('hidden', v !== 'ocr');
+  }
+
+  function setFile(file) {
+    if (!file) return;
+    fname.textContent = '✓ ' + file.name + '  (' + (file.size/1048576).toFixed(1) + ' MB)';
+    go.disabled = false;
+  }
+  drop.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => setFile(input.files[0]));
+  ['dragenter','dragover'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('drag'); }));
+  ['dragleave','drop'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('drag'); }));
+  drop.addEventListener('drop', ev => {
+    const file = ev.dataTransfer.files[0];
+    if (file) { const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; setFile(file); }
+  });
+
+  document.getElementById('f').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (!input.files[0]) return;
+    go.disabled = true;
+    status.className = 'status';
+    const mode = document.getElementById('mode').value;
+    status.innerHTML = '<span class="spin"></span>' +
+      (mode === 'data' ? 'Reading frames and extracting the data…' : 'Extracting frames and building the workbook…');
+
+    const fd = new FormData(document.getElementById('f'));
+    fd.set('video', input.files[0]);
+
+    try {
+      const res = await fetch('/convert', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const txt = await res.text();
+        status.className = 'status err';
+        status.innerHTML = 'Error: ' + txt.replace(/<[^>]+>/g, ' ').trim();
+        go.disabled = false; return;
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename\*?=(?:utf-8'')?"?([^";]+)"?/i);
+      const name = m ? decodeURIComponent(m[1]) : 'output.xlsx';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      status.className = 'status ok';
+      status.textContent = '✓ Done — downloaded ' + name;
+    } catch (e) {
+      status.className = 'status err';
+      status.textContent = 'Error: ' + e;
+    } finally { go.disabled = false; }
+  });
+</script>
+</body>
+</html>
