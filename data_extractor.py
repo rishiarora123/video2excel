@@ -485,15 +485,26 @@ class OcrEngine(Engine):
             data = pytesseract.image_to_data(im, output_type=Output.DICT)
 
         words = []
+        heights = []
         for i, txt in enumerate(data["text"]):
             if txt.strip() and int(data["conf"][i]) >= 35:
                 words.append((data["top"][i], data["left"][i], txt))
+                heights.append(int(data["height"][i]))
+        if not words:
+            return []
         words.sort()
 
-        # group words into text lines (same line if tops are within 18px, upscaled)
+        # Thresholds scale with the text height so the parser adapts to any
+        # video resolution (pixel constants only worked for one recording).
+        heights.sort()
+        h_med = heights[len(heights) // 2] or 1
+        line_tol = max(4, int(0.6 * h_med))    # words on the same text line
+        card_gap = max(20, int(3.0 * h_med))   # gap that starts a new card
+
+        # group words into text lines
         raw_lines: list[dict] = []
         for top, lft, txt in words:
-            if raw_lines and abs(top - raw_lines[-1]["top"]) <= 18:
+            if raw_lines and abs(top - raw_lines[-1]["top"]) <= line_tol:
                 raw_lines[-1]["words"].append((lft, txt))
                 raw_lines[-1]["top"] = min(raw_lines[-1]["top"], top)
             else:
@@ -504,12 +515,12 @@ class OcrEngine(Engine):
             if text and not _is_button_noise(text):
                 lines.append({"top": L["top"], "text": text})
 
-        # group lines into cards (new card when the vertical gap > 110px, upscaled)
+        # group lines into cards (new card when the vertical gap exceeds card_gap)
         cards: list[list[str]] = []
         cur: list[str] = []
         prev: int | None = None
         for L in lines:
-            if prev is not None and L["top"] - prev > 110:
+            if prev is not None and L["top"] - prev > card_gap:
                 if cur:
                     cards.append(cur)
                 cur = []
