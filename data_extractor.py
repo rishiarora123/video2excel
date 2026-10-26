@@ -617,7 +617,7 @@ def convert_video_to_data(
     out_xlsx: Path,
     engine: str = "vision",
     sample_fps: float = 2.0,
-    max_frames: int = 120,
+    max_frames: int = 600,
     model: str | None = None,
     api_key: str | None = None,
     workdir: Path | None = None,
@@ -639,7 +639,7 @@ def convert_video_to_data(
     workdir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="v2x_data_"))
     frames_dir = workdir / "frames"
     try:
-        frame_rows = extract_frames(video_path, frames_dir, sample_fps, max_frames)
+        frame_rows = extract_frames(video_path, frames_dir, sample_fps, max_frames, duration=info.duration)
         frame_rows = dedupe_frames(frame_rows, threshold=frame_dedupe_threshold)
         per_frame = [eng.extract(row["path"]) for row in frame_rows]
         records = merge_records(per_frame)
@@ -658,7 +658,7 @@ if __name__ == "__main__":
     p.add_argument("-o", "--output", default=None)
     p.add_argument("--engine", choices=["vision", "ocr"], default="vision")
     p.add_argument("--fps", type=float, default=2.0)
-    p.add_argument("--max-frames", type=int, default=120)
+    p.add_argument("--max-frames", type=int, default=600)
     p.add_argument("--model", default=None, help="vision model id (default claude-sonnet-5-5)")
     args = p.parse_args()
 

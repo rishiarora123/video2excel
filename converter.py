@@ -111,35 +111,61 @@ def extract_frames(
     out_dir: Path,
     sample_fps: float,
     max_frames: int,
+    duration: float | None = None,
 ) -> list[dict]:
-    """Sample frames at `sample_fps` per second. Returns frame metadata rows.
+    """Sample frames at up to `sample_fps` per second, at most `max_frames` total.
+
+    For a long video, sampling at the full rate would write tens of thousands of
+    JPEGs to disk before any cap — enough to fill the drive. So we lower the
+    effective rate to `max_frames / duration` when needed (spreading the frames
+    across the whole video) AND pass ffmpeg a hard `-frames:v` ceiling, so the
+    extraction can never exceed `max_frames` files regardless.
 
     Each row: {index, time_s, time_str, path}
     """
     ffmpeg = _require_tool("ffmpeg")
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    if duration is None:
+        duration = probe_video(video_path).duration
+
+    eff_fps = sample_fps
+    if duration and duration > 0:
+        cap_fps = max_frames / duration
+        if 0 < cap_fps < sample_fps:
+            eff_fps = cap_fps
+    eff_fps = max(eff_fps, 0.001)
+
     pattern = str(out_dir / "frame_%05d.jpg")
     cmd = [
         ffmpeg, "-hide_banner", "-loglevel", "error",
         "-i", str(video_path),
-        "-vf", f"fps={sample_fps}",
+        "-vf", f"fps={eff_fps:.6f}",
+        "-frames:v", str(int(max_frames)),   # hard ceiling — cannot fill the disk
         "-q:v", "3",
         pattern,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise ConversionError("Frame extraction failed.\n" + proc.stderr.strip())
+        # free anything partially written before surfacing the error
+        for f in out_dir.glob("frame_*.jpg"):
+            f.unlink(missing_ok=True)
+        msg = proc.stderr.strip()
+        if "No space left on device" in msg:
+            raise ConversionError(
+                "Ran out of disk space while extracting frames. Free up some disk "
+                "space and try again, or lower the sample rate / max frames."
+            )
+        raise ConversionError("Frame extraction failed.\n" + msg)
 
     frames = sorted(out_dir.glob("frame_*.jpg"))
     if not frames:
         raise ConversionError("No frames could be extracted from this video.")
 
-    # Safety cap: evenly drop frames if we overshoot the limit.
+    # Safety net: evenly drop frames if we still somehow overshoot the limit.
     if len(frames) > max_frames:
         step = len(frames) / max_frames
         kept = [frames[min(int(i * step), len(frames) - 1)] for i in range(max_frames)]
-        # de-dupe while preserving order
         seen, trimmed = set(), []
         for f in kept:
             if f not in seen:
@@ -152,8 +178,8 @@ def extract_frames(
 
     rows = []
     for i, f in enumerate(frames):
-        # frame i was sampled at t = i / sample_fps seconds (first frame at t=0)
-        t = i / sample_fps if sample_fps else 0.0
+        # frame i was sampled at t = i / eff_fps seconds (first frame at t=0)
+        t = i / eff_fps if eff_fps else 0.0
         rows.append({
             "index": i + 1,
             "time_s": round(t, 3),
@@ -286,7 +312,7 @@ def convert_video_to_excel(
     frames_dir = workdir / "frames"
     thumbs_dir = workdir / "thumbs"
     try:
-        rows = extract_frames(video_path, frames_dir, sample_fps, max_frames)
+        rows = extract_frames(video_path, frames_dir, sample_fps, max_frames, duration=info.duration)
         build_workbook(
             out_xlsx, info, rows, video_path.name,
             sample_fps, thumb_width, thumbs_dir,
