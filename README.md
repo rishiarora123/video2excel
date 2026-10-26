@@ -30,12 +30,20 @@ Open <http://127.0.0.1:8070>, pick a mode, drop in a video, click **Convert to E
 > record is **Name (bold) / Position / Organization**, like the sample. For a
 > very different layout, use the vision engine.
 >
-> **Keep the sample rate at 1 fps for data mode.** The tool de-duplicates
-> overlapping frames itself, so a higher rate finds no extra people — it only
-> samples more mid-scroll frames (partly cut-off cards), which adds OCR noise.
-> The OCR parser filters that noise (icon/button glyphs, title/organization
-> lines mistaken for names, gibberish) and merges typo'd duplicate names, but
-> 1 fps gives the cleanest result.
+> **Sample rate (data mode).** Default is **2 fps**, which captures everyone —
+> including people only briefly on screen at the start or end of the scroll.
+> The OCR parser filters the extra noise finer sampling brings (icon/button
+> glyphs, title/organization lines mistaken for names, gibberish) and the
+> records are clustered with order-independent union-find, so the row set is
+> stable across sample rates. Drop to **1 fps** for the cleanest text if you
+> don't need those edge rows.
+>
+> De-duplication keeps two people apart when their names differ only by case or
+> punctuation (two deliberate cards in the list), and merges a single read of
+> the same card across frames plus clear 1-character OCR typos of one name.
+> A person whose card is cut off at the very end of the recording (so their
+> organisation never fully scrolls into view) is still listed, with whatever
+> fields were visible.
 
 ### Using the vision engine
 

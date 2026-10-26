@@ -54,7 +54,7 @@ async def convert(
     engine: str = Form("vision"),
     api_key: str = Form(""),
     model: str = Form(""),
-    data_fps: float = Form(1.0),
+    data_fps: float = Form(2.0),
     # frames-mode options
     fps: float = Form(1.0),
     max_frames: int = Form(400),

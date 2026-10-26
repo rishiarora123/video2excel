@@ -107,82 +107,95 @@ def _name_ratio(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 
+def _name_flat(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
 def _same_person(name_a: str, toks_a: set[str], name_b: str, toks_b: set[str],
                  similarity: float) -> bool:
+    # partial read of the same card: one name's tokens are a subset of the other
+    # (e.g. "Adel OROZCO" ⊂ "Adel CHAOUCH OROZCO"). Identical reads also land here.
     if len(toks_a & toks_b) >= 2 and (toks_a <= toks_b or toks_b <= toks_a):
         return True
+    # Same letters but different case/punctuation = two DELIBERATE cards shown in
+    # the list (e.g. "Adel CHAOUCH OROZCO" vs "Adel Chaouch-Orozco"). Keep both.
+    if _name_flat(name_a) == _name_flat(name_b):
+        return False
+    # Otherwise, only a genuine letter-level OCR typo of one card merges
+    # (e.g. "CHAOUCH" vs "CHAOQUCH").
     return _name_ratio(name_a, name_b) >= similarity
 
 
-def merge_records(per_frame: list[list[dict]], similarity: float = 0.90) -> list[dict]:
+def merge_records(per_frame: list[list[dict]], similarity: float = 0.96) -> list[dict]:
     """Collapse the same person seen across overlapping frames into one row.
 
     1. Reject "names" that are actually an organization or position seen on some
        other card — these come from top-cut cards whose real name scrolled off
        (e.g. "QS ImpACT", "UAE University", "Deputy Vice Rector").
-    2. Group remaining reads by person: same person when names share a token
-       subset (partial reads like "Adel OROZCO" ⊂ "Adel CHAOUCH OROZCO") or are
-       highly similar strings (OCR typos like "CHAOQUCH" vs "CHAOUCH").
-    3. Reconcile groups in a final pass so clustering is order-independent.
-    Each person keeps the MOST COMPLETE field read and the majority-vote name
-    spelling, so a one-frame typo loses to the spelling seen in more frames.
+    2. Cluster the remaining reads with union-find (order-independent, so the
+       result is stable regardless of sample rate). Two reads are the same
+       person when their names share a token subset (partial reads like
+       "Adel OROZCO" ⊂ "Adel CHAOUCH OROZCO") or are a near-identical string
+       (a 1-char OCR typo, ratio >= 0.96). Names with the SAME letters but
+       different case/punctuation are kept apart — they are two deliberate
+       cards shown in the list ("Adel CHAOUCH OROZCO" vs "Adel Chaouch-Orozco").
+    3. Each person keeps the MOST COMPLETE field read, is displayed with the
+       name spelling seen in the most frames, and the rows come out in the
+       order the people first appear.
     """
     from collections import Counter
 
-    all_recs = []
+    recs = []
     known_org: set[str] = set()
     known_pos: set[str] = set()
     for cards in per_frame:
         for rec in cards:
             rec = {f: _norm(rec.get(f, "")) for f in FIELDS}
-            if rec["name"]:
-                all_recs.append(rec)
             if rec["organization"]:
                 known_org.add(rec["organization"].lower())
             if rec["position"]:
                 known_pos.add(rec["position"].lower())
+            if rec["name"]:
+                recs.append(rec)
+    recs = [r for r in recs
+            if r["name"].lower() not in known_org and r["name"].lower() not in known_pos]
+    if not recs:
+        return []
 
-    groups: list[dict] = []   # {names: Counter, rep, rep_tokens, best}
-    for rec in all_recs:
-        name = rec["name"]
-        if name.lower() in known_org or name.lower() in known_pos:
-            continue
-        rt = _name_tokens(name)
-        g = next((g for g in groups
-                  if _same_person(name, rt, g["rep"], g["rep_tokens"], similarity)), None)
-        if g is None:
-            groups.append({"names": Counter([name]), "rep": name,
-                           "rep_tokens": rt, "best": rec})
-            continue
-        g["names"][name] += 1
-        if _completeness(rec) > _completeness(g["best"]):
-            g["best"] = rec
-        if len(rt) > len(g["rep_tokens"]):
-            g["rep"], g["rep_tokens"] = name, rt
+    toks = [_name_tokens(r["name"]) for r in recs]
 
-    # reconcile groups until stable (handles order-dependent splits)
-    merged = True
-    while merged:
-        merged = False
-        for i in range(len(groups)):
-            for j in range(i + 1, len(groups)):
-                a, b = groups[i], groups[j]
-                if _same_person(a["rep"], a["rep_tokens"], b["rep"], b["rep_tokens"], similarity):
-                    a["names"].update(b["names"])
-                    if _completeness(b["best"]) > _completeness(a["best"]):
-                        a["best"] = b["best"]
-                    if len(b["rep_tokens"]) > len(a["rep_tokens"]):
-                        a["rep"], a["rep_tokens"] = b["rep"], b["rep_tokens"]
-                    groups.pop(j)
-                    merged = True
-                    break
-            if merged:
-                break
+    # union-find over records
+    parent = list(range(len(recs)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[max(ri, rj)] = min(ri, rj)   # keep earliest-appearing root
+
+    for i in range(len(recs)):
+        for j in range(i + 1, len(recs)):
+            if _same_person(recs[i]["name"], toks[i], recs[j]["name"], toks[j], similarity):
+                union(i, j)
+
+    clusters: dict[int, list[int]] = {}
+    for i in range(len(recs)):
+        clusters.setdefault(find(i), []).append(i)
 
     out = []
-    for g in groups:
-        rec = dict(g["best"])
-        rec["name"] = g["names"].most_common(1)[0][0]
+    for root in sorted(clusters):                    # first-appearance order
+        members = clusters[root]
+        best = max((recs[m] for m in members), key=_completeness)
+        names = Counter(recs[m]["name"] for m in members)
+        # display name: most frequent, then fullest (most tokens), then longest
+        disp = max(names, key=lambda n: (names[n], len(_name_tokens(n)), len(n)))
+        rec = dict(best)
+        rec["name"] = disp
         out.append(rec)
     return out
 
@@ -603,7 +616,7 @@ def convert_video_to_data(
     video_path: Path,
     out_xlsx: Path,
     engine: str = "vision",
-    sample_fps: float = 1.0,
+    sample_fps: float = 2.0,
     max_frames: int = 120,
     model: str | None = None,
     api_key: str | None = None,
@@ -644,7 +657,7 @@ if __name__ == "__main__":
     p.add_argument("video")
     p.add_argument("-o", "--output", default=None)
     p.add_argument("--engine", choices=["vision", "ocr"], default="vision")
-    p.add_argument("--fps", type=float, default=1.0)
+    p.add_argument("--fps", type=float, default=2.0)
     p.add_argument("--max-frames", type=int, default=120)
     p.add_argument("--model", default=None, help="vision model id (default claude-sonnet-5-5)")
     args = p.parse_args()

@@ -88,7 +88,7 @@
             </div>
             <div>
               <label for="data_fps">Sample rate (fps)</label>
-              <input type="number" id="data_fps" name="data_fps" value="1" min="0.2" step="0.1" />
+              <input type="number" id="data_fps" name="data_fps" value="2" min="0.2" step="0.1" />
             </div>
           </div>
           <div id="vision-opts">
@@ -115,7 +115,7 @@
             <div class="banner warn">tesseract isn't installed. Run <code>brew install tesseract</code>, or use the Claude-vision engine.</div>
             {% endif %}
           </div>
-          <p class="hint">Built for recordings that scroll through a list (e.g. an attendees list). Each record's three lines become Name, Position, Organization. Duplicate cards from the scroll are merged automatically. <b>Leave the sample rate at 1</b> — the tool already de-duplicates overlapping frames, so a higher rate finds no extra people and only adds OCR noise.</p>
+          <p class="hint">Built for recordings that scroll through a list (e.g. an attendees list). Each record's three lines become Name, Position, Organization. Overlapping/duplicate cards from the scroll are de-duplicated automatically. <b>2 fps</b> captures everyone including people only briefly on screen at the start/end of the scroll; drop to 1 for the cleanest text if you don't need those edge rows.</p>
         </div>
 
         <!-- FRAMES mode -->
